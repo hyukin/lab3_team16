@@ -3,6 +3,9 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <signal.h>
+#include <stdlib.h>
+
 #define MAX_BUF 255
 
 int getTokken(char* input, char** argv) { //토큰 분석 함수
@@ -127,7 +130,7 @@ void do_redirect_command(int flag, int dp, char** argv) { // 리다이렉션 명
         if ((pid = fork()) == -1) { printf("fork() 에러"); exit(1); }
         else if (pid == 0) {
             close(fd);
-            fd = open(bw_argv[0], O_RDWR | O_CREAT | O_TRUNC, 0644); //
+            fd = open(bw_argv[0], O_RDWR | O_CREAT | O_TRUNC, 0644); // 파일이 없으면 새로 만들고, 파일이 있으면 trunc함
             dup2(fd, STDOUT_FILENO); // 값을 STDOUT_FILENO로 지정
             write(fd, STDOUT_FILENO, sizeof(STDOUT_FILENO));
             close(fd);
@@ -142,8 +145,8 @@ void do_redirect_command(int flag, int dp, char** argv) { // 리다이렉션 명
         if ((pid = fork()) == -1) { printf("fork() 에러"); exit(1); }
         else if (pid == 0) {
             close(fd);
-            fd = open(bw_argv[0], O_RDWR | O_CREAT | O_APPEND, 0644);
-            dup2(fd, STDOUT_FILENO); // 값을 STDOUT_FILENO로 지정
+            fd = open(bw_argv[0], O_RDWR | O_CREAT | O_APPEND, 0644); //파일이 없으면 새로 만들고, 파일이 있으면 append함
+                dup2(fd, STDOUT_FILENO); // 값을 STDOUT_FILENO로 지정
             write(fd, STDOUT_FILENO, sizeof(STDOUT_FILENO));
             close(fd);
             if (execvp(fw_argv[0], fw_argv) == -1)if (strlen(fw_argv[0]) != 0)printf("명령을 찾을 수 없습니다. %s\n", fw_argv[0]);
@@ -179,11 +182,11 @@ void do_bg_command(int bp, char** argv) { // 백그라운드 명령어 처리 �
     fw_argv = (char**)malloc(32 * sizeof(char*));
     for (i = 0; i < 32; i++)fw_argv[i] = (char*)malloc(64 * sizeof(char));
 
-    for (i = 0; i < bp; i++) {
+    for (i = 0; i < bp; i++) { //동적할당 포인터만큼 복사
         strcpy(fw_argv[i], argv[i]);
     }
 
-    fw_argv[bp] = (char*)0;
+    fw_argv[bp] = (char*)0; //명령어 처리
     if ((pid = fork()) == -1) {
         printf("fork() 에러\n");
     }
@@ -264,20 +267,36 @@ int check_command(int argc, char** argv) { // 파이프/입출력재지정/백�
     }
 }
 
+void handler_Ctrl_C(int signo) { //시그널 함수
+    int ppid = getppid();
+    printf(" ctr c kill\n");
+    kill(ppid, SIGINT);
+}
+
+void handler_Ctrl_Z(int signo) {
+    int ppid = getppid();
+    printf(" ctr z kill\n");     
+    kill(ppid, SIGQUIT);
+}
+
+
 int main()
 {
-    char prompt[] = "[HG's_Shell ";
+    char prompt[] = "HIandJH teams>> ";
     char* dir;
     int inner_flag;
     int i;
-    // 전처리: 쉘 설명 출력
-    printf("--------------------------------------\n");
-    printf(" HG's Shell을 시작합니다!\n");
-    printf(" [ 기능 ]\n");
-    printf(" 쉘 명령어 : cd, exit\n");
-    printf(" 외부 명령어 : pipe(|), redirection(|), background(&)\n");
-    printf(" -> 외부 명령어 사용에는 약간의 제약이 있습니다.\n");
-    printf("--------------------------------------\n");
+    
+    struct sigaction signalc;
+    struct sigaction sigz;
+
+    signalc.sa_handler = handler_Ctrl_C;
+    sigz.sa_handler = handler_Ctrl_Z;
+    sigfillset(&(signalc.sa_mask));
+    sigfillset(&(sigz.sa_mask));
+    sigaction(SIGINT, &signalc, NULL);         
+    sigaction(SIGTSTP, &sigz, NULL);     
+
 
     while (1) {
         char command[MAX_BUF] = { '\0', }; //명령어
@@ -289,18 +308,12 @@ int main()
         argv = (char**)malloc(32 * sizeof(char*));
         for (i = 0; i < 32; i++)argv[i] = (char*)malloc(64 * sizeof(char));
 
-        //      printf("HG Shell %s > ", strrchr(dir,'/') );
-              //쉘 프롬프트 출력. 그리고 표준 입력에서 명령어 라인 읽기
+       
         write(STDOUT_FILENO, prompt, sizeof(prompt));
-        write(STDOUT_FILENO, strrchr(dir, '/') + 1, strlen(strrchr(dir, '/')));
-        write(STDOUT_FILENO, "> ", 3);
         read(STDIN_FILENO, command, MAX_BUF);
 
         //명령을 토큰 별로 구분
         argc = getTokken(command, argv);
-        //      for(i=0;i<argc;i++)printf("argv[%d] : %s(%d)\n", i, argv[i],strlen(argv[i]));
-
-              //토큰이 내부 명령일 경우 처리
         inner_flag = inner_command(argv);
 
         // 토큰에서 파이프, 입출력 재지정, 백 그라운드, 다중 명령 처리
